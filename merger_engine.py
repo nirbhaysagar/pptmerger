@@ -535,9 +535,88 @@ class PPTXMerger:
 class PDFExporter:
     """
     Exports PPTX files to PDF.
+    Primary Engine on Windows: Microsoft PowerPoint native automation (100% exact vector layout).
     Primary Engine on macOS: Apple Keynote background automation.
-    Secondary / Fallback Engine: ReportLab slide rendering.
+    Secondary / Fallback Engine: LibreOffice headless / ReportLab slide rendering.
     """
+
+    @staticmethod
+    def export_via_powerpoint(pptx_path: str, pdf_path: str) -> bool:
+        """
+        Uses Microsoft PowerPoint native automation on Windows via COM.
+        Guarantees 100% exact, pixel-perfect, vector PDF export directly from PowerPoint.
+        """
+        abs_pptx = os.path.abspath(pptx_path).replace("'", "''")
+        abs_pdf = os.path.abspath(pdf_path).replace("'", "''")
+
+        # 1. Try win32com if installed
+        try:
+            import win32com.client
+            import pythoncom
+            pythoncom.CoInitialize()
+            ppt = win32com.client.DispatchEx("PowerPoint.Application")
+            try:
+                pres = ppt.Presentations.Open(abs_pptx, False, False, False)
+                # 32 = ppSaveAsPDF
+                pres.SaveAs(abs_pdf, 32)
+                pres.Close()
+                if os.path.exists(abs_pdf) and os.path.getsize(abs_pdf) > 0:
+                    logger.info(f"PowerPoint COM successfully exported exact PDF: {abs_pdf}")
+                    return True
+            finally:
+                ppt.Quit()
+                pythoncom.CoUninitialize()
+        except Exception as e:
+            logger.debug(f"Direct win32com export failed, trying PowerShell: {e}")
+
+        # 2. PowerShell COM automation (standard on all Windows versions, no extra packages needed)
+        ps_script = f'''
+        $pptx = '{abs_pptx}'
+        $pdf  = '{abs_pdf}'
+        $ppt = $null
+        try {{
+            $ppt = New-Object -ComObject PowerPoint.Application
+            try {{ $ppt.Visible = [Microsoft.Office.Core.MsoTriState]::msoFalse }} catch {{}}
+            $pres = $ppt.Presentations.Open($pptx, [Microsoft.Office.Core.MsoTriState]::msoTrue, [Microsoft.Office.Core.MsoTriState]::msoFalse, [Microsoft.Office.Core.MsoTriState]::msoFalse)
+            try {{
+                # 2 = ppFixedFormatTypePDF, 2 = ppFixedFormatIntentPrint
+                $pres.ExportAsFixedFormat($pdf, 2, 2, [Microsoft.Office.Core.MsoTriState]::msoFalse)
+            }} catch {{
+                $pres.SaveAs($pdf, 32)
+            }}
+            $pres.Close()
+            if (Test-Path -Path $pdf) {{
+                Write-Output "SUCCESS"
+            }} else {{
+                Write-Output "ERROR: PDF file not created"
+            }}
+        }} catch {{
+            Write-Output "ERROR: $($_.Exception.Message)"
+        }} finally {{
+            if ($ppt -ne $null) {{
+                try {{ $ppt.Quit() }} catch {{}}
+                [System.Runtime.InteropServices.Marshal]::ReleaseComObject($ppt) | Out-Null
+            }}
+        }}
+        '''
+
+        try:
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            output = res.stdout.strip()
+            if "SUCCESS" in output and os.path.exists(abs_pdf) and os.path.getsize(abs_pdf) > 0:
+                logger.info(f"PowerPoint PowerShell successfully exported exact PDF: {abs_pdf}")
+                return True
+            else:
+                logger.warning(f"PowerPoint PowerShell export output: {output}, stderr: {res.stderr}")
+                return False
+        except Exception as e:
+            logger.error(f"PowerPoint PowerShell PDF export failed: {e}")
+            return False
 
     @staticmethod
     def export_via_keynote(pptx_path: str, pdf_path: str) -> bool:
@@ -691,6 +770,16 @@ class PDFExporter:
         if progress_callback:
             progress_callback(92, "Converting presentation to PDF...")
 
+        # 1. On Windows: Use Microsoft PowerPoint native vector engine
+        if sys.platform == "win32":
+            logger.info("Attempting PDF export via Microsoft PowerPoint native engine...")
+            if cls.export_via_powerpoint(pptx_path, pdf_path):
+                if progress_callback:
+                    progress_callback(98, "PDF exported with Microsoft PowerPoint vector engine.")
+                return True
+            logger.warning("PowerPoint PDF export failed, trying alternatives...")
+
+        # 2. On macOS: Use Apple Keynote native vector engine
         if sys.platform == "darwin":
             logger.info("Attempting PDF export via Apple Keynote...")
             if cls.export_via_keynote(pptx_path, pdf_path):
@@ -706,11 +795,13 @@ class PDFExporter:
                     progress_callback(98, "PDF exported with Keynote vector engine.")
                 return True
 
+        # 3. Cross-platform: Try LibreOffice headless
         if cls.export_via_soffice(pptx_path, pdf_path):
             if progress_callback:
                 progress_callback(98, "PDF exported with LibreOffice engine.")
             return True
 
+        # 4. Fallback: ReportLab
         if cls.export_via_reportlab(pptx_path, pdf_path):
             if progress_callback:
                 progress_callback(98, "PDF exported with fallback engine.")
