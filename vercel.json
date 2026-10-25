@@ -58,7 +58,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "/app.py"
+      "destination": "/app.py?path=/api/$1"
     }
   ]
 }

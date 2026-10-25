@@ -104,9 +104,36 @@ class PPTUnifyHandler(SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
-    def do_GET(self):
-        parsed = urlparse(self.path)
+    def get_path_and_query(self):
+        # Support Vercel serverless rewritten paths and native paths
+        orig_url = (
+            self.headers.get("x-matched-path")
+            or self.headers.get("x-forwarded-uri")
+            or self.headers.get("x-original-uri")
+            or self.path
+        )
+        parsed = urlparse(orig_url)
         path = parsed.path
+        query = parse_qs(parsed.query)
+
+        # Also inspect self.path in case of vercel.json rewrite: /app.py?path=...
+        curr_parsed = urlparse(self.path)
+        curr_query = parse_qs(curr_parsed.query)
+        if "path" in curr_query and (not path or path.endswith("app.py")):
+            target = curr_query["path"][0]
+            parsed_target = urlparse(target)
+            path = parsed_target.path
+            for k, v in parse_qs(parsed_target.query).items():
+                query.setdefault(k, v)
+
+        for k, v in curr_query.items():
+            if k != "path":
+                query.setdefault(k, v)
+
+        return path, query
+
+    def do_GET(self):
+        path, query = self.get_path_and_query()
 
         if path == "/" or path == "/index.html":
             self.serve_file(os.path.join(STATIC_DIR, "index.html"), "text/html; charset=utf-8")
@@ -127,7 +154,6 @@ class PPTUnifyHandler(SimpleHTTPRequestHandler):
             else:
                 self.send_error(404, "File Not Found")
         elif path == "/api/task-status":
-            query = parse_qs(parsed.query)
             task_id = query.get("taskId", [""])[0]
             task = get_task(task_id) or {"status": "unknown", "progress": 0, "message": "Task not found"}
             self.send_json(task)
@@ -142,8 +168,7 @@ class PPTUnifyHandler(SimpleHTTPRequestHandler):
             self.send_error(404, "Not Found")
 
     def do_POST(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
+        path, query = self.get_path_and_query()
 
         if path == "/api/upload":
             self.handle_upload()
@@ -178,8 +203,7 @@ class PPTUnifyHandler(SimpleHTTPRequestHandler):
         return "application/octet-stream"
 
     def do_HEAD(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
+        path, query = self.get_path_and_query()
         if path.startswith("/api/download/"):
             filename = unquote(path[len("/api/download/"):])
             filepath = os.path.join(EXPORT_DIR, filename)
