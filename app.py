@@ -27,16 +27,56 @@ logger = logging.getLogger("PPTUnifyApp")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
-EXPORT_DIR = os.path.join(BASE_DIR, "exports")
+IS_SERVERLESS = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+
+if IS_SERVERLESS or not os.access(BASE_DIR, os.W_OK):
+    UPLOAD_DIR = "/tmp/uploads"
+    EXPORT_DIR = "/tmp/exports"
+    TASKS_DIR = "/tmp/tasks"
+else:
+    UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+    EXPORT_DIR = os.path.join(BASE_DIR, "exports")
+    TASKS_DIR = os.path.join(BASE_DIR, "tasks")
+
+for _d in (UPLOAD_DIR, EXPORT_DIR, TASKS_DIR):
+    try:
+        os.makedirs(_d, exist_ok=True)
+    except OSError:
+        pass
+
 STATIC_DIR = os.path.join(BASE_DIR, "static")
+try:
+    os.makedirs(STATIC_DIR, exist_ok=True)
+except OSError:
+    pass
 
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(EXPORT_DIR, exist_ok=True)
-os.makedirs(STATIC_DIR, exist_ok=True)
-
-# In-memory storage for active tasks & progress
+# Storage for active tasks & progress (in-memory + disk backed)
 MERGE_TASKS = {}
+
+
+def save_task(task_id, task_data):
+    MERGE_TASKS[task_id] = task_data
+    try:
+        task_file = os.path.join(TASKS_DIR, f"{task_id}.json")
+        with open(task_file, "w", encoding="utf-8") as f:
+            json.dump(task_data, f)
+    except Exception as e:
+        logger.debug(f"Could not persist task file: {e}")
+
+
+def get_task(task_id):
+    if task_id in MERGE_TASKS:
+        return MERGE_TASKS[task_id]
+    task_file = os.path.join(TASKS_DIR, f"{task_id}.json")
+    if os.path.exists(task_file):
+        try:
+            with open(task_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                MERGE_TASKS[task_id] = data
+                return data
+        except Exception:
+            pass
+    return None
 
 
 class PPTUnifyHandler(SimpleHTTPRequestHandler):
@@ -89,7 +129,7 @@ class PPTUnifyHandler(SimpleHTTPRequestHandler):
         elif path == "/api/task-status":
             query = parse_qs(parsed.query)
             task_id = query.get("taskId", [""])[0]
-            task = MERGE_TASKS.get(task_id, {"status": "unknown", "progress": 0, "message": "Task not found"})
+            task = get_task(task_id) or {"status": "unknown", "progress": 0, "message": "Task not found"}
             self.send_json(task)
         elif path.startswith("/api/download/"):
             filename = unquote(path[len("/api/download/"):])
@@ -280,7 +320,7 @@ class PPTUnifyHandler(SimpleHTTPRequestHandler):
                 return
 
             task_id = uuid.uuid4().hex[:12]
-            MERGE_TASKS[task_id] = {
+            initial_task = {
                 "status": "queued",
                 "progress": 0,
                 "message": "Initializing merge task...",
@@ -288,13 +328,19 @@ class PPTUnifyHandler(SimpleHTTPRequestHandler):
                 "export_format": export_format,
                 "downloads": {}
             }
+            save_task(task_id, initial_task)
 
-            # Run in worker thread so HTTP request returns immediately with task_id
-            def worker():
+            if IS_SERVERLESS:
+                # In serverless environments, background threads get frozen when the
+                # HTTP response completes. Execute synchronously so output is ready immediately.
                 run_merge_task(task_id, file_ids, mode, export_format, output_name)
+            else:
+                # Run in worker thread for local real-time progress updates
+                def worker():
+                    run_merge_task(task_id, file_ids, mode, export_format, output_name)
 
-            t = threading.Thread(target=worker, daemon=True)
-            t.start()
+                t = threading.Thread(target=worker, daemon=True)
+                t.start()
 
             self.send_json({"success": True, "taskId": task_id})
 
@@ -308,26 +354,49 @@ class PPTUnifyHandler(SimpleHTTPRequestHandler):
         """
         try:
             count = 0
-            for f in os.listdir(UPLOAD_DIR):
-                path = os.path.join(UPLOAD_DIR, f)
-                if os.path.isfile(path):
-                    os.remove(path)
-                    count += 1
+            if os.path.exists(UPLOAD_DIR):
+                for f in os.listdir(UPLOAD_DIR):
+                    path = os.path.join(UPLOAD_DIR, f)
+                    if os.path.isfile(path):
+                        try:
+                            os.remove(path)
+                            count += 1
+                        except OSError:
+                            pass
             self.send_json({"success": True, "cleared_count": count})
         except Exception as e:
             self.send_json({"success": False, "error": str(e)}, 500)
+
+
+# ==============================================================================
+# Vercel Serverless Function Entrypoint Exports
+# Vercel looks for a top-level `handler`, `app`, or `application` in app.py.
+# ==============================================================================
+class handler(PPTUnifyHandler):
+    """Vercel Serverless Function entrypoint handler."""
+    pass
+
+app = handler
+application = handler
 
 
 def run_merge_task(task_id, file_ids, mode, export_format, output_name):
     """
     Executes the PPT merge and PDF export in a background worker thread.
     """
-    task = MERGE_TASKS[task_id]
+    task = get_task(task_id) or {
+        "status": "processing",
+        "progress": 0,
+        "message": "Starting merge...",
+        "downloads": {}
+    }
     task["status"] = "processing"
+    save_task(task_id, task)
 
     def update_progress(pct, msg):
         task["progress"] = pct
         task["message"] = msg
+        save_task(task_id, task)
         logger.info(f"Task {task_id}: [{pct}%] {msg}")
 
     try:
@@ -350,6 +419,7 @@ def run_merge_task(task_id, file_ids, mode, export_format, output_name):
 
         task["downloads"]["pptx"] = f"/api/download/{out_pptx_name}"
         task["total_slides"] = merge_result["total_slides"]
+        save_task(task_id, task)
 
         # 2. PDF Conversion if requested
         pdf_success = False
@@ -360,6 +430,7 @@ def run_merge_task(task_id, file_ids, mode, export_format, output_name):
                 task["downloads"]["pdf"] = f"/api/download/{out_pdf_name}"
             else:
                 task["pdf_warning"] = "PDF conversion encountered an issue. PPTX is ready for download."
+            save_task(task_id, task)
 
         # 3. Create ZIP package if both requested
         if export_format == "both":
@@ -369,15 +440,18 @@ def run_merge_task(task_id, file_ids, mode, export_format, output_name):
                 if pdf_success and os.path.exists(out_pdf_path):
                     zf.write(out_pdf_path, arcname=f"{output_name}.pdf")
             task["downloads"]["zip"] = f"/api/download/{out_zip_name}"
+            save_task(task_id, task)
 
         update_progress(100, "Done! Presentation merged successfully.")
         task["status"] = "completed"
+        save_task(task_id, task)
 
     except Exception as e:
         logger.error(f"Merge task {task_id} failed: {e}", exc_info=True)
         task["status"] = "failed"
         task["error"] = str(e)
         task["message"] = f"Merge failed: {str(e)}"
+        save_task(task_id, task)
 
 
 def run_server(host="127.0.0.1", port=5005):
