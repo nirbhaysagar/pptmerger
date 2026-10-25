@@ -1,0 +1,25 @@
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Output directories & user test files
+uploads/*
+!uploads/.gitkeep
+exports/*
+!exports/.gitkeep
+test_scratch/
+test_c0c74571/
+test_extract/
+test_cleared.pptx
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*

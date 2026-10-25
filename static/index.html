@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PPT Unify — Selection-Based Presentation Merger</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-wrapper">
+    <!-- Header / Brand -->
+    <header class="app-header">
+      <div class="brand-group">
+        <div class="brand-tag"><span class="hl-tag">PPT UNIFY</span></div>
+        <h1 class="hero-title">
+          Merge up to <span class="hl">100 PPTs</span> into one presentation <span class="hl">by line</span>.
+        </h1>
+        <p class="hero-desc">
+          Upload error-free. Collate or sequence lines. Export simultaneously as <span class="hl-soft">PPTX</span> and <span class="hl-soft">PDF</span>.
+        </p>
+      </div>
+
+      <div class="header-right-group">
+        <!-- Selection-Style Theme Switcher -->
+        <div class="theme-switcher">
+          <span class="theme-label">THEME</span>
+          <div class="theme-btn-group">
+            <button type="button" class="theme-btn active" id="themeDarkBtn">DARK</button>
+            <button type="button" class="theme-btn" id="themeLightBtn">WHITE</button>
+          </div>
+        </div>
+
+        <!-- Monospace Status / Metrics Bar -->
+        <div class="telemetry-bar">
+          <div class="telemetry-item">
+            <span class="telemetry-label">QUEUE</span>
+            <span class="telemetry-value" id="fileCountBadge">00 / 100</span>
+          </div>
+          <div class="telemetry-divider">/</div>
+          <div class="telemetry-item">
+            <span class="telemetry-label">SLIDES</span>
+            <span class="telemetry-value" id="totalSlidesBadge">000</span>
+          </div>
+          <div class="telemetry-divider">/</div>
+          <div class="telemetry-item">
+            <span class="telemetry-label">STATE</span>
+            <span class="telemetry-value state-idle" id="systemStateBadge">IDLE</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="workspace-grid">
+      <!-- Left: Upload & File Queue -->
+      <section class="queue-section">
+        <!-- Minimal Selection-Style Drop Zone -->
+        <div class="drop-zone" id="dropZone">
+          <div class="drop-zone-inner">
+            <div class="drop-label-mono">[ UPLOAD ZONE ]</div>
+            <div class="drop-prompt">
+              Drag &amp; drop up to <span class="hl">100 presentations</span> here or
+              <button type="button" class="btn-select-trigger" id="browseBtn">
+                <span class="btn-select-text">BROWSE FILES</span>
+              </button>
+            </div>
+            <div class="drop-meta">
+              <span>FORMATS: .PPTX, .PPT</span>
+              <span>&bull;</span>
+              <span>MAX: 100 FILES</span>
+              <span>&bull;</span>
+              <span>AUTO-VALIDATED</span>
+            </div>
+            <input type="file" id="fileInput" multiple accept=".pptx,.ppt" style="display: none;">
+          </div>
+        </div>
+
+        <!-- Upload Progress -->
+        <div id="uploadProgressContainer" class="upload-progress-container" style="display: none;">
+          <div class="upload-progress-header">
+            <span class="mono-label" id="uploadProgressText">UPLOADING...</span>
+            <span class="mono-pct" id="uploadProgressPct">0%</span>
+          </div>
+          <div class="progress-bar-track">
+            <div id="uploadProgressBar" class="progress-bar-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Line Queue Table Container -->
+        <div class="table-container">
+          <div class="table-toolbar">
+            <div class="toolbar-title">
+              <span class="hl-block">LINE QUEUE</span>
+              <span class="toolbar-subtitle">Order dictates slide assembly</span>
+            </div>
+
+            <div class="toolbar-actions">
+              <button class="tool-btn" id="sortNaturalBtn" title="Sort by Natural Number (Deck 1, 2, ... 10, 100)">
+                NATURAL
+              </button>
+              <button class="tool-btn" id="sortAlphaBtn" title="Sort Alphabetically A to Z">
+                A-Z
+              </button>
+              <button class="tool-btn" id="reverseOrderBtn" title="Reverse Current Order">
+                REVERSE
+              </button>
+              <button class="tool-btn tool-danger" id="clearAllBtn" title="Clear all files">
+                CLEAR
+              </button>
+            </div>
+          </div>
+
+          <!-- Table -->
+          <div class="table-scroll">
+            <table class="file-table" id="fileTable">
+              <thead>
+                <tr>
+                  <th style="width: 65px;">LINE</th>
+                  <th>PRESENTATION NAME</th>
+                  <th style="width: 90px;">SLIDES</th>
+                  <th style="width: 85px;">SIZE</th>
+                  <th style="width: 130px;">STATUS</th>
+                  <th style="width: 110px; text-align: right;">ORDER</th>
+                </tr>
+              </thead>
+              <tbody id="fileTableBody">
+                <tr class="empty-row" id="emptyRow">
+                  <td colspan="6">
+                    <div class="empty-state">
+                      <div class="empty-symbol">[ &empty; ]</div>
+                      <p>Queue is empty</p>
+                      <small>Upload up to 100 presentations above to sequence lines</small>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right: Settings & Action Panel -->
+      <aside class="control-panel">
+        <div class="panel-box">
+          <div class="panel-header">
+            <span class="panel-title">[ MERGE CONFIGURATION ]</span>
+          </div>
+
+          <!-- Output File Name -->
+          <div class="form-row">
+            <label class="form-label" for="outputFilename">OUTPUT FILENAME</label>
+            <div class="input-wrapper">
+              <input type="text" id="outputFilename" value="Unified_Presentation" placeholder="Unified_Presentation" spellcheck="false">
+            </div>
+          </div>
+
+          <!-- Merge Strategy ("By Line") -->
+          <div class="form-row">
+            <label class="form-label">MERGE STRATEGY (BY LINE)</label>
+            <div class="strategy-selector">
+              <label class="selection-pill selected" id="labelSequential">
+                <input type="radio" name="mergeMode" value="sequential" checked>
+                <div class="pill-body">
+                  <div class="pill-head">
+                    <span class="pill-radio-mark">&bull;</span>
+                    <span class="pill-title">SEQUENTIAL</span>
+                  </div>
+                  <div class="pill-desc">Append line-by-line: Deck 1 slides &rarr; Deck 2 slides &rarr; ...</div>
+                </div>
+              </label>
+
+              <label class="selection-pill" id="labelInterleaved">
+                <input type="radio" name="mergeMode" value="interleaved">
+                <div class="pill-body">
+                  <div class="pill-head">
+                    <span class="pill-radio-mark">&bull;</span>
+                    <span class="pill-title">INTERLEAVED</span>
+                  </div>
+                  <div class="pill-desc">Collate line-by-line across files: Slide 1 of each &rarr; Slide 2 of each &rarr; ...</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- Export Format Selection -->
+          <div class="form-row">
+            <label class="form-label">EXPORT FORMAT</label>
+            <div class="format-chips">
+              <label class="format-chip selected" id="chipBoth">
+                <input type="radio" name="exportFormat" value="both" checked>
+                <span class="chip-label">PPTX + PDF</span>
+              </label>
+              <label class="format-chip" id="chipPptx">
+                <input type="radio" name="exportFormat" value="pptx">
+                <span class="chip-label">PPTX ONLY</span>
+              </label>
+              <label class="format-chip" id="chipPdf">
+                <input type="radio" name="exportFormat" value="pdf">
+                <span class="chip-label">PDF ONLY</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Merge Button -->
+          <div class="action-row">
+            <button type="button" class="btn-execute" id="mergeBtn" disabled>
+              <span class="btn-execute-text">MERGE &amp; EXPORT</span>
+              <span class="btn-execute-arrow">&rarr;</span>
+            </button>
+          </div>
+
+          <!-- Merge Progress / Status Panel -->
+          <div class="execution-progress" id="progressPanel" style="display: none;">
+            <div class="progress-meta">
+              <span class="status-indicator active-dot"></span>
+              <span class="progress-stage" id="progressTitle">PROCESSING</span>
+              <span class="progress-percentage" id="progressPct">0%</span>
+            </div>
+            <div class="progress-bar-track">
+              <div class="progress-bar-fill" id="mergeProgressBar" style="width: 0%;"></div>
+            </div>
+            <div class="progress-log" id="progressStatusMsg">Initializing engine...</div>
+          </div>
+
+          <!-- Download Panel (Revealed upon completion) -->
+          <div class="download-panel" id="downloadCard" style="display: none;">
+            <div class="download-header">
+              <span class="hl-badge">[ EXPORT READY ]</span>
+            </div>
+            <div class="download-name" id="downloadFileName">Unified_Presentation</div>
+            <div class="download-meta-info" id="downloadMeta">Total Slides: 0</div>
+
+            <div class="download-grid">
+              <a href="#" id="downloadPptxBtn" class="download-tile" download style="display: none;">
+                <span class="tile-ext">.PPTX</span>
+                <span class="tile-action">DOWNLOAD &darr;</span>
+              </a>
+              <a href="#" id="downloadPdfBtn" class="download-tile" download style="display: none;">
+                <span class="tile-ext">.PDF</span>
+                <span class="tile-action">DOWNLOAD &darr;</span>
+              </a>
+              <a href="#" id="downloadZipBtn" class="download-tile highlight-tile" download style="display: none;">
+                <span class="tile-ext">.ZIP</span>
+                <span class="tile-action">DOWNLOAD ALL &darr;</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
