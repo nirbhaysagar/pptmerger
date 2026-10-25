@@ -171,15 +171,16 @@ async function processIncomingFiles(files) {
     const truncName = file.name.length > 25 ? file.name.substring(0, 22) + "..." : file.name;
     uploadProgressText.textContent = `UPLOADING [${i + 1}/${filesToUpload.length}] ${truncName}`;
 
-    // On Vercel free tier, serverless requests cannot exceed 4.5MB
-    if (file.size > 4.5 * 1024 * 1024 && window.location.hostname.includes("vercel.app")) {
+    // On Vercel, serverless requests cannot exceed 4.5MB payload limit
+    if (file.size > 4.0 * 1024 * 1024 && window.location.hostname.includes("vercel")) {
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
       fileList.push({
         id: "err_" + Math.random().toString(36).substring(7),
         original_name: file.name,
         size_bytes: file.size,
         slide_count: 0,
         is_valid: false,
-        error_message: "File exceeds 4.5MB Vercel serverless limit. Please run locally for unlimited file sizes.",
+        error_message: `File is ${sizeMB}MB (exceeds Vercel's 4.5MB limit). Run locally on your PC via start.bat for unlimited file sizes!`,
         aspect_ratio: "—",
         dimensions: "—"
       });
@@ -201,6 +202,9 @@ async function processIncomingFiles(files) {
       });
 
       if (!response.ok) {
+        if (response.status === 413) {
+          throw new Error("Payload too large (413). Vercel limits uploads to 4.5MB. Run locally via start.bat for unlimited file sizes.");
+        }
         throw new Error(`Upload failed with status ${response.status}`);
       }
 

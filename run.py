@@ -11,7 +11,10 @@ import subprocess
 import webbrowser
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-VENV_PYTHON = os.path.join(BASE_DIR, ".venv", "bin", "python")
+if sys.platform == "win32":
+    VENV_PYTHON = os.path.join(BASE_DIR, ".venv", "Scripts", "python.exe")
+else:
+    VENV_PYTHON = os.path.join(BASE_DIR, ".venv", "bin", "python")
 
 
 def check_and_relaunch():
