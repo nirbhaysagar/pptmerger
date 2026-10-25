@@ -131,7 +131,7 @@ function handleFileSelect(e) {
 async function processIncomingFiles(files) {
   if (isUploading) return;
 
-  const validExtensions = [".pptx", ".ppt"];
+  const validExtensions = [".pptx", ".ppt", ".pptm", ".ppsx"];
   const pptFiles = files.filter(f => {
     // Ignore Windows temporary / hidden lock files like ~$Presentation.pptx
     if (f.name.startsWith("~$")) return false;
@@ -140,7 +140,7 @@ async function processIncomingFiles(files) {
   });
 
   if (pptFiles.length === 0) {
-    alert("Please upload PowerPoint files (.pptx or .ppt).");
+    alert("Please upload PowerPoint files (.pptx, .ppt, .pptm, or .ppsx).");
     return;
   }
 

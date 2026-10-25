@@ -40,6 +40,53 @@ ET.register_namespace('r', NS_P['r'])
 ET.register_namespace('a', NS_P['a'])
 
 
+def try_convert_legacy_ppt(file_path: str) -> Optional[str]:
+    """
+    Attempts to auto-convert legacy .ppt file to modern .pptx.
+    - Windows: Uses PowerShell PowerPoint COM automation if Office is installed.
+    - Cross-platform: Uses LibreOffice headless if installed.
+    """
+    abs_path = os.path.abspath(file_path)
+    base, _ = os.path.splitext(abs_path)
+    out_pptx = f"{base}_converted.pptx"
+
+    if sys.platform == "win32":
+        ps_script = f'''
+        $ppt = New-Object -ComObject PowerPoint.Application
+        try {{
+            $pres = $ppt.Presentations.Open("{abs_path}", [Microsoft.Office.Core.MsoTriState]::msoFalse, [Microsoft.Office.Core.MsoTriState]::msoFalse, [Microsoft.Office.Core.MsoTriState]::msoFalse)
+            $pres.SaveAs("{out_pptx}", 24)
+            $pres.Close()
+            Write-Output "SUCCESS"
+        }} catch {{
+            Write-Output "ERROR: $($_.Exception.Message)"
+        }} finally {{
+            $ppt.Quit()
+        }}
+        '''
+        try:
+            res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_script], capture_output=True, text=True, timeout=30)
+            if "SUCCESS" in res.stdout and os.path.exists(out_pptx) and zipfile.is_zipfile(out_pptx):
+                logger.info(f"Auto-converted legacy .ppt to .pptx via PowerPoint COM: {out_pptx}")
+                return out_pptx
+        except Exception as e:
+            logger.debug(f"PowerPoint COM conversion failed: {e}")
+
+    for cmd in ["soffice", "libreoffice", "soffice.exe"]:
+        if shutil.which(cmd):
+            try:
+                out_dir = os.path.dirname(abs_path)
+                subprocess.run([cmd, "--headless", "--convert-to", "pptx", "--outdir", out_dir, abs_path], capture_output=True, timeout=30)
+                candidate = f"{base}.pptx"
+                if os.path.exists(candidate) and zipfile.is_zipfile(candidate):
+                    logger.info(f"Auto-converted legacy .ppt to .pptx via LibreOffice: {candidate}")
+                    return candidate
+            except Exception as e:
+                logger.debug(f"LibreOffice conversion failed: {e}")
+
+    return None
+
+
 def validate_pptx_file(file_path: str) -> Dict[str, Any]:
     """
     Validates a PowerPoint file error-free.
@@ -72,11 +119,17 @@ def validate_pptx_file(file_path: str) -> Dict[str, Any]:
         if not zipfile.is_zipfile(file_path):
             with open(file_path, "rb") as f:
                 header = f.read(8)
-            if header.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
-                result["error_message"] = "Legacy binary .ppt detected. Please save as modern .pptx format."
+            if header.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") or file_path.lower().endswith(".ppt"):
+                # Attempt automatic conversion if PowerPoint or LibreOffice is installed
+                converted = try_convert_legacy_ppt(file_path)
+                if converted and zipfile.is_zipfile(converted):
+                    shutil.move(converted, file_path)
+                else:
+                    result["error_message"] = "Legacy binary .ppt format. Please open in PowerPoint and Save As .pptx."
+                    return result
             else:
                 result["error_message"] = "Not a recognized PowerPoint (.pptx) file."
-            return result
+                return result
 
         # Count slides directly from presentation.xml for speed and zero memory overhead
         with zipfile.ZipFile(file_path, 'r') as z:
