@@ -279,8 +279,8 @@ class PPTUnifyHandler(SimpleHTTPRequestHandler):
                 if not filename:
                     continue
 
-                # Clean filename
-                clean_name = os.path.basename(filename)
+                # Clean filename (handle Windows backslashes C:\path\file.pptx and Linux/Mac paths)
+                clean_name = os.path.basename(filename.replace("\\", "/"))
                 unique_prefix = uuid.uuid4().hex[:8]
                 saved_filename = f"{unique_prefix}_{clean_name}"
                 target_path = os.path.join(UPLOAD_DIR, saved_filename)

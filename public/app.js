@@ -133,6 +133,8 @@ async function processIncomingFiles(files) {
 
   const validExtensions = [".pptx", ".ppt"];
   const pptFiles = files.filter(f => {
+    // Ignore Windows temporary / hidden lock files like ~$Presentation.pptx
+    if (f.name.startsWith("~$")) return false;
     const ext = f.name.substring(f.name.lastIndexOf(".")).toLowerCase();
     return validExtensions.includes(ext);
   });
@@ -160,20 +162,39 @@ async function processIncomingFiles(files) {
   if (uploadProgressPct) uploadProgressPct.textContent = "5%";
   uploadProgressText.textContent = `PREPARING ${filesToUpload.length} PRESENTATIONS...`;
 
-  // Upload in manageable batches of 10 to ensure zero network timeout / error-free handling
-  const BATCH_SIZE = 10;
+  // Upload one presentation at a time for maximum reliability, per-file error isolation,
+  // and staying strictly under serverless payload limits
   let processedCount = 0;
 
-  for (let i = 0; i < filesToUpload.length; i += BATCH_SIZE) {
-    const chunk = filesToUpload.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < filesToUpload.length; i++) {
+    const file = filesToUpload[i];
+    const truncName = file.name.length > 25 ? file.name.substring(0, 22) + "..." : file.name;
+    uploadProgressText.textContent = `UPLOADING [${i + 1}/${filesToUpload.length}] ${truncName}`;
+
+    // On Vercel free tier, serverless requests cannot exceed 4.5MB
+    if (file.size > 4.5 * 1024 * 1024 && window.location.hostname.includes("vercel.app")) {
+      fileList.push({
+        id: "err_" + Math.random().toString(36).substring(7),
+        original_name: file.name,
+        size_bytes: file.size,
+        slide_count: 0,
+        is_valid: false,
+        error_message: "File exceeds 4.5MB Vercel serverless limit. Please run locally for unlimited file sizes.",
+        aspect_ratio: "—",
+        dimensions: "—"
+      });
+      processedCount++;
+      const pct = Math.round((processedCount / filesToUpload.length) * 100);
+      uploadProgressBar.style.width = `${pct}%`;
+      if (uploadProgressPct) uploadProgressPct.textContent = `${pct}%`;
+      renderTable();
+      continue;
+    }
+
     const formData = new FormData();
-    chunk.forEach(file => formData.append("files", file));
+    formData.append("files", file);
 
     try {
-      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-      const totalBatches = Math.ceil(filesToUpload.length / BATCH_SIZE);
-      uploadProgressText.textContent = `UPLOADING BATCH ${batchNum}/${totalBatches}...`;
-
       const response = await fetch("/api/upload", {
         method: "POST",
         body: formData
@@ -186,16 +207,37 @@ async function processIncomingFiles(files) {
       const result = await response.json();
       if (result.success && result.files) {
         fileList.push(...result.files);
+      } else {
+        fileList.push({
+          id: "err_" + Math.random().toString(36).substring(7),
+          original_name: file.name,
+          size_bytes: file.size,
+          slide_count: 0,
+          is_valid: false,
+          error_message: result.error || "Validation failed",
+          aspect_ratio: "—",
+          dimensions: "—"
+        });
       }
     } catch (err) {
-      console.error("Batch upload error:", err);
-      alert(`Error uploading batch: ${err.message}`);
+      console.error("Upload error for file:", file.name, err);
+      fileList.push({
+        id: "err_" + Math.random().toString(36).substring(7),
+        original_name: file.name,
+        size_bytes: file.size,
+        slide_count: 0,
+        is_valid: false,
+        error_message: `Upload error: ${err.message}`,
+        aspect_ratio: "—",
+        dimensions: "—"
+      });
     }
 
-    processedCount += chunk.length;
+    processedCount++;
     const pct = Math.round((processedCount / filesToUpload.length) * 100);
     uploadProgressBar.style.width = `${pct}%`;
     if (uploadProgressPct) uploadProgressPct.textContent = `${pct}%`;
+    renderTable();
   }
 
   setTimeout(() => {
