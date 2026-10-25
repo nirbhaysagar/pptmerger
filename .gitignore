@@ -23,3 +23,5 @@ test_cleared.pptx
 .AppleDouble
 .LSOverride
 ._*
+tasks/*
+!tasks/.gitkeep

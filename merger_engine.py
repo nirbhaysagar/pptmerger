@@ -317,7 +317,6 @@ class PPTXMerger:
 
             cur_sld_id = 256
             cur_r_id = 1000
-            padded_media = set()
 
             # Import each slide into the package
             for new_slide_num, item in enumerate(ordered_slides, start=1):
@@ -384,69 +383,7 @@ class PPTXMerger:
                     with open(os.path.join(slides_rels_dir, new_slide_rels_filename), "wb") as srf:
                         srf.write(ET.tostring(slide_rels_tree, encoding='utf-8', xml_declaration=True))
 
-                # Enhance table cell icons for 100% exact alignment matching PowerPoint layout
-                slide_tree = ET.fromstring(slide_xml_bytes)
-                rid_to_target = {}
-                if slide_rels_path_in_zip in zf.namelist():
-                    rid_to_target = {rel.get('Id'): rel.get('Target') for rel in slide_rels_tree.findall(f'{{{NS_RELS}}}Relationship')}
-
-                for tc in slide_tree.iter(f'{{{NS_P["a"]}}}tc'):
-                    tcPr = tc.find(f'{{{NS_P["a"]}}}tcPr')
-                    if tcPr is None:
-                        continue
-                    blipFill = tcPr.find(f'{{{NS_P["a"]}}}blipFill')
-                    if blipFill is None:
-                        continue
-                    stretch = blipFill.find(f'{{{NS_P["a"]}}}stretch')
-                    if stretch is None:
-                        continue
-                    fillRect = stretch.find(f'{{{NS_P["a"]}}}fillRect')
-                    if fillRect is None:
-                        continue
-
-                    l_val = int(fillRect.get('l', '0'))
-                    r_val = int(fillRect.get('r', '0'))
-
-                    if r_val >= 20000:
-                        blip = blipFill.find(f'{{{NS_P["a"]}}}blip')
-                        if blip is not None:
-                            r_id = blip.get(f'{{{NS_P["r"]}}}embed')
-                            if r_id and r_id in rid_to_target:
-                                tgt = rid_to_target[r_id]
-                                media_fname = os.path.basename(tgt)
-                                media_path = os.path.join(media_dir, media_fname)
-
-                                if os.path.exists(media_path) and media_fname not in padded_media:
-                                    try:
-                                        from PIL import Image
-                                        img = Image.open(media_path)
-                                        w, h = img.size
-                                        frac = (100000 - l_val - r_val) / 100000.0
-                                        if frac > 0.05:
-                                            total_w = int(w / frac)
-                                            x_offset = int(total_w * (l_val / 100000.0))
-                                            new_img = Image.new('RGBA', (total_w, h), (0, 0, 0, 0))
-                                            mask = img.split()[-1] if img.mode == 'RGBA' else None
-                                            new_img.paste(img, (x_offset, 0), mask=mask)
-                                            new_img.save(media_path, 'PNG')
-                                            padded_media.add(media_fname)
-                                    except Exception as e:
-                                        logger.warning(f"Error padding icon {media_fname}: {e}")
-
-                        txBody = tc.find(f'{{{NS_P["a"]}}}txBody')
-                        if txBody is not None:
-                            for p in txBody.findall(f'{{{NS_P["a"]}}}p'):
-                                pPr = p.find(f'{{{NS_P["a"]}}}pPr')
-                                if pPr is None:
-                                    pPr = ET.SubElement(p, f'{{{NS_P["a"]}}}pPr')
-                                pPr.set('marL', '550000')
-
-                ET.register_namespace('p', NS_P['p'])
-                ET.register_namespace('a', NS_P['a'])
-                ET.register_namespace('r', NS_P['r'])
-                slide_xml_bytes = ET.tostring(slide_tree, encoding='utf-8', xml_declaration=True)
-
-                # Write slide XML
+                # Write slide XML preserving exact original layout, vector assets, and formatting
                 with open(os.path.join(slides_dir, new_slide_filename), "wb") as sf:
                     sf.write(slide_xml_bytes)
 
